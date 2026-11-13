@@ -47,6 +47,7 @@
             >
               {{ action }}
             </button>
+            <button class="link" type="button" @click="viewEvidenceUsage(row)">证据复用</button>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -54,6 +55,36 @@
         </tr>
       </tbody>
     </table>
+
+    <div v-if="usageDrawer" class="usage-mask" @click.self="usageDrawer = null">
+      <div class="usage-drawer">
+        <header class="usage-head">
+          <h3>证据复用情况 · {{ usageDrawer.ref }}</h3>
+          <button class="btn ghost" type="button" @click="usageDrawer = null">关闭</button>
+        </header>
+        <p v-if="!usageDrawer.items.length" class="usage-empty">
+          该成本报告暂未被任何健康度评分复用；评分任务收口引用其「冷数据占比」后会在此显示证据区间与口径版本。
+        </p>
+        <table v-else class="data-table">
+          <thead>
+            <tr><th>健康度报告</th><th>评估范围</th><th>证据类别</th><th>复用证据区间</th><th>口径版本</th><th>分段状态</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in usageDrawer.items" :key="item.job_id">
+              <td>{{ item['报告编号'] }}</td>
+              <td>{{ item['评估范围'] }}</td>
+              <td>{{ item.category_label }}</td>
+              <td>
+                {{ item.evidence_range?.start_ref }} ~ {{ item.evidence_range?.end_ref }}
+                （{{ item.evidence_range?.count }} 条 · {{ item.evidence_range?.module }}.{{ item.evidence_range?.field }}）
+              </td>
+              <td><span class="usage-version">{{ item.spec_version }}</span></td>
+              <td>{{ segmentStatusLabel(item.segment_status) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条存储成本优化记录</span>
@@ -70,7 +101,7 @@ import { request } from '@/api/client'
 type Row = Record<string, string | number | null>
 
 const ENDPOINT = '/api/cost'
-const columns = ["报告编号", "分析范围", "存储总量", "冷数据占比", "优化建议", "预计节省", "执行状态", "生成时间"]
+const columns = ["报告编号", "分析范围", "存储总量", "冷数据占比", "优化建议", "预计节省", "执行状态", "生成时间", "评分回写摘要"]
 const actions = ["开始分析", "执行优化", "归档报告"]
 const statuses = ["草稿", "分析中", "已生成", "已执行"]
 const stats = [{"label": "成本分析报告总数", "value": 0}, {"label": "已生成报告", "value": 0}, {"label": "已执行报告", "value": 0}]
@@ -80,6 +111,23 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const usageDrawer = ref<{ ref: string; items: any[] } | null>(null)
+
+function segmentStatusLabel(status: string): string {
+  return { pending: '待计算', running: '计算中', completed: '已收口', failed: '失败' }[status] ?? status
+}
+
+async function viewEvidenceUsage(row: Row) {
+  errorMessage.value = ''
+  try {
+    const response = await request(`${ENDPOINT}/${row.id}/evidence-usage`)
+    if (!response.ok) throw new Error('证据复用情况读取失败')
+    const payload = await response.json()
+    usageDrawer.value = { ref: String(row['报告编号']), items: payload.items ?? [] }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '证据复用情况读取失败'
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,3 +176,39 @@ async function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.usage-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 50;
+}
+.usage-drawer {
+  width: 62%;
+  max-width: 860px;
+  background: #fff;
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+}
+.usage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.usage-empty {
+  padding: 14px 16px;
+  background: #f5f7fa;
+  color: #5b6472;
+  border-radius: 6px;
+}
+.usage-version {
+  font-family: monospace;
+  color: #2f6bff;
+}
+</style>

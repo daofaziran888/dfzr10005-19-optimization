@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.drift import DriftService
+from app.services.scoring_engine import engine
 
 router = APIRouter(prefix="/api/drift", tags=["数据漂移检测"])
 
@@ -56,6 +57,15 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
+
+
+@router.get("/{entry_id}/evidence-usage")
+def evidence_usage(entry_id: int) -> dict[str, Any]:
+    """业务入口联动：展示该漂移记录被哪些健康度评分复用，以及复用的证据区间与口径版本。"""
+    if service.get_entry(entry_id) is None:
+        raise HTTPException(status_code=404, detail=f"漂移记录 {entry_id} 不存在或已归档")
+    usages = engine.evidence_usage("drift", entry_id)
+    return {"module": "drift", "entry_id": entry_id, "total": len(usages), "items": usages}
 
 
 @router.get("/export")

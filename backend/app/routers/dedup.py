@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.dedup import DedupService
+from app.services.scoring_engine import engine
 
 router = APIRouter(prefix="/api/dedup", tags=["数据去重管理"])
 
@@ -56,6 +57,15 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
+
+
+@router.get("/{entry_id}/evidence-usage")
+def evidence_usage(entry_id: int) -> dict[str, Any]:
+    """业务入口联动：展示该去重任务的影响行数被哪些健康度评分复用及证据区间。"""
+    if service.get_entry(entry_id) is None:
+        raise HTTPException(status_code=404, detail=f"去重任务 {entry_id} 不存在或已归档")
+    usages = engine.evidence_usage("dedup", entry_id)
+    return {"module": "dedup", "entry_id": entry_id, "total": len(usages), "items": usages}
 
 
 @router.get("/export")

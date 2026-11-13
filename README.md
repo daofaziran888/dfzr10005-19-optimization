@@ -73,5 +73,50 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 健康度分段重算
+
+数仓健康度评估（`score`）不再整份重扫，而是按「评估范围 × 证据类别」分段计算，核心逻辑在
+`backend/app/services/scoring_engine.py`。
+
+### 计算段（4 段）
+
+| 计算段 | 健康分字段 | 证据来源 | 证据字段 |
+| --- | --- | --- | --- |
+| storage | 存储健康分 | 成本报告 `cost`（按分析范围匹配） | 冷数据占比 |
+| compute | 计算健康分 | 漂移记录 `drift`（全域） | 偏差比例 |
+| quality | 质量健康分 | 去重任务 `dedup`（全域） | 影响行数 |
+| composite | 综合评分 | 三类证据段收口后加权（0.4/0.3/0.3） | — |
+
+- 每段独立保存状态（pending/running/completed/failed）、证据区间、证据引用与错误说明；
+  已收口（completed）的段在重试或恢复时直接复用，只处理未完成部分。
+- 任务绑定口径版本（`spec_version`，见 `CURRENT_SPEC_VERSION`）并固化证据快照。
+  口径升级（`POST /api/score/spec/bump`）后新任务按新版本全量重算，旧报告继续使用原快照。
+- 同一评估范围同一时刻只允许一个活跃任务（以运行令牌 `running_token` 互斥），重复启动不会
+  生成第二份评分；全局并发上限 `MAX_CONCURRENT_JOBS = 2`。
+- 每个评估范围保留最近 `SNAPSHOT_KEEP = 3` 个快照版本，超出的只标记淘汰、不删除数据，
+  旧报告仍可读取原快照。
+- 三类健康分与综合评分必须来自同一证据版本；报告未全部收口时公示会被拒绝，并明确列出
+  缺失的证据类别。
+- 分段状态、进度与快照分值回写到健康度报告清单；分段结果同时回写到成本/漂移/去重来源行的
+  `评分回写` 与 `评分回写摘要` 字段，来源侧还可通过
+  `GET /api/{cost|drift|dedup}/{id}/evidence-usage` 查询被复用的证据区间。
+
+### 主要接口
+
+- `POST /api/score/{id}/actions`（action=开始评估/公示报告/归档报告）
+- `GET  /api/score/{id}/job`：四个计算段的状态、证据区间、错误与整体进度
+- `POST /api/score/{id}/retry`：只重算失败/未收口的计算段
+- `POST /api/score/{id}/segments/{segment_key}/retry`：单段重试
+- `GET  /api/score/spec`、`POST /api/score/spec/bump`：查询/升级评分口径版本
+
+### 测试
+
+```bash
+cd backend
+PYTHONPATH=. .venv/bin/python tests/test_scoring.py            # 引擎分段/互斥/快照/空态
+PYTHONPATH=. .venv/bin/python tests/test_integration_http.py   # HTTP 级重试/版本/回写/公示拦截
+```
+
+
 领域：数据工程
 子方向：数仓与数据湖
